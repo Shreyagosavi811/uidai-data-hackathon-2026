@@ -64,5 +64,14 @@ final_df.to_csv(
     index=False
 )
 
-print("\n✅ PIPELINE COMPLETED SUCCESSFULLY")
+from visualization import run_visualizations
+if __name__ == "__main__":
+    df_clean = final_df
+
+    # 🔥 THIS LINE IS CRITICAL
+    run_visualizations(df_clean, df_invalid)
+
+    print("✅ Pipeline completed successfully")
+
+
 print("📁 Output folder:", OUTPUT_PATH)
