@@ -1,17 +1,18 @@
 import pandas as pd
 import numpy as np
 
-
 AGE_COLS = ['age_0_5', 'age_5_17', 'age_18_greater']
 
 
 def normalize_text(df):
     """
-    Safe text normalization (won't crash if column missing)
+    Normalize text columns safely
     """
+    df = df.copy()
+
     for col in ['state', 'district']:
         if col in df.columns:
-            df[col] = (
+            df.loc[:, col] = (
                 df[col]
                 .astype(str)
                 .str.strip()
@@ -22,39 +23,72 @@ def normalize_text(df):
 
 def clean_dates(df):
     """
-    Standardize date → month_year + year
+    Convert date column → month_year + year
+    SAFE for sliced DataFrames
     """
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    df = df.copy()
 
-    df['month_year'] = df['date'].dt.strftime('%m/%Y')
-    df['year'] = df['date'].dt.year.astype('Int64')
+    if 'date' not in df.columns:
+        return df
 
+    # Convert date safely
+    date_series = pd.to_datetime(df['date'], errors='coerce')
+
+    df.loc[:, 'month_year'] = date_series.dt.to_period('M').astype(str)
+    df.loc[:, 'year'] = date_series.dt.year.astype('Int64')
+
+    # Drop raw date (optional but recommended)
     df.drop(columns=['date'], inplace=True)
+
     return df
 
 
 def clean_age_columns(df):
     """
-    Convert age columns and compute total enrolments
+    Convert age columns to numeric & compute total enrollments
+    NEVER returns None
     """
-    df[AGE_COLS] = df[AGE_COLS].apply(pd.to_numeric, errors='coerce')
-    df['number_of_enrolments'] = df[AGE_COLS].sum(axis=1)
+    df = df.copy()
+
+    # Use only columns that exist
+    existing_age_cols = [c for c in AGE_COLS if c in df.columns]
+
+    if not existing_age_cols:
+        # If age columns missing, still create total column
+        df.loc[:, 'number_of_enrolments'] = 0
+        return df
+
+    # Convert to numeric safely
+    df.loc[:, existing_age_cols] = (
+        df[existing_age_cols]
+        .apply(pd.to_numeric, errors='coerce')
+        .fillna(0)
+    )
+
+    # Compute total
+    df.loc[:, 'number_of_enrolments'] = df[existing_age_cols].sum(axis=1)
+
     return df
 
 
 def geo_validate_fast(df, ref):
     """
-    Optimized geo validation using dict lookup (BIG DATA SAFE)
+    Optimized geo validation (dict-based lookup)
+    Suitable for large datasets
     """
+    df = df.copy()
 
     geo_map = {}
     for s, g in ref.groupby('state'):
         geo_map[s] = {}
         for d, sub in g.groupby('district'):
-            geo_map[s][d] = set(sub['pincode'])
+            geo_map[s][d] = set(sub['pincode'].astype(str))
 
     def validate(row):
-        s, d, p = row['state'], row['district'], str(row['pincode'])
+        s = row.get('state')
+        d = row.get('district')
+        p = str(row.get('pincode'))
+
         if s not in geo_map:
             return 'INVALID_STATE'
         if d not in geo_map[s]:
@@ -63,5 +97,5 @@ def geo_validate_fast(df, ref):
             return 'PINCODE_MISMATCH'
         return 'VALID'
 
-    df['geo_status'] = df.apply(validate, axis=1)
+    df.loc[:, 'geo_status'] = df.apply(validate, axis=1)
     return df

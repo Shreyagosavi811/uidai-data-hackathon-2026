@@ -1,77 +1,92 @@
 import os
-from data_loading import load_aadhaar_data, load_reference_data
+import pandas as pd
+
+from data_loading import (
+    load_aadhaar_data,
+    load_reference_data,
+    validate_and_fix_states
+)
+
 from cleaning import (
     normalize_text,
     clean_dates,
-    clean_age_columns,
-    geo_validate_fast,
-    AGE_COLS
+    clean_age_columns
+)
+from visualization import (
+    plot_state_wise_enrollment,
+    plot_yearly_enrollment
 )
 
-# ---------------- PATHS ---------------- #
+# ==========================
+# PATH CONFIG
+# ==========================
+AADHAAR_DATA_PATH = "data/raw"
+REFERENCE_DATA_PATH = "data/reference"   # <-- GOV reference folder
+OUTPUT_DIR = "output"
 
-BASE_DIR = os.getcwd()
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-AADHAAR_DATA_PATH = os.path.join(BASE_DIR, "data", "raw")
-REFERENCE_PATH = os.path.join(BASE_DIR, "data", "reference", "States_UTs.csv")
-OUTPUT_PATH = os.path.join(BASE_DIR, "data", "output")
-
-os.makedirs(OUTPUT_PATH, exist_ok=True)
-
-# ---------------- PIPELINE ---------------- #
-
-print("\n🚀 Starting Aadhaar Data Pipeline\n")
-
-# Load data
+# ==========================
+# LOAD DATA
+# ==========================
+print("📥 Loading Aadhaar data...")
 df = load_aadhaar_data(AADHAAR_DATA_PATH)
-ref = load_reference_data(REFERENCE_PATH)
 
-# Cleaning
-df.columns = df.columns.str.lower().str.strip()
+print("📥 Loading Government reference data...")
+
+
+REFERENCE_DATA_PATH = "data/reference"
+
+ref = load_reference_data(REFERENCE_DATA_PATH)
+
+df = validate_and_fix_states(
+    df,
+    ref,
+    output_dir=OUTPUT_DIR
+)
+
+
+# ==========================
+# CLEANING PIPELINE
+# ==========================
+print("🧹 Normalizing text...")
 df = normalize_text(df)
 ref = normalize_text(ref)
 
+print("📅 Cleaning dates...")
 df = clean_dates(df)
+
+print("👶 Cleaning age columns & computing total enrollments...")
 df = clean_age_columns(df)
 
-# Basic validity filter
-df = df[
-    (df['state'].notna()) &
-    (df['district'].notna()) &
-    (df['number_of_enrolments'] > 0)
-].copy()
+# ==========================
+# SAVE CLEANED DATA
+# ==========================
+cleaned_path = os.path.join(OUTPUT_DIR, "cleaned_aadhaar.csv")
+df.to_csv(cleaned_path, index=False)
+print(f"✅ Cleaned data saved: {cleaned_path}")
 
-# Geo validation
-df = geo_validate_fast(df, ref)
+# ==========================
+# YEAR-WISE ENROLLMENT CSV
+# ==========================
+print("📊 Computing yearly enrollment...")
 
-df_valid = df[df['geo_status'] == 'VALID']
-df_invalid = df[df['geo_status'] != 'VALID']
-
-# Save intermediate outputs
-df_valid.to_csv(os.path.join(OUTPUT_PATH, "validated_records.csv"), index=False)
-df_invalid.to_csv(os.path.join(OUTPUT_PATH, "invalid_records.csv"), index=False)
-
-# ---------------- FINAL AGGREGATION ---------------- #
-
-final_df = (
-    df_valid
-    .groupby(['state', 'district', 'pincode', 'month_year'], as_index=False)[AGE_COLS]
+yearly_df = (
+    df.groupby("year", dropna=True)["number_of_enrolments"]
     .sum()
+    .reset_index()
 )
 
-final_df.to_csv(
-    os.path.join(OUTPUT_PATH, "final_validated_aadhaar_enrolment_dataset.csv"),
-    index=False
-)
+yearly_csv_path = os.path.join(OUTPUT_DIR, "yearly_enrollment.csv")
+yearly_df.to_csv(yearly_csv_path, index=False)
 
-from visualization import run_visualizations
-if __name__ == "__main__":
-    df_clean = final_df
+print(f"📊 Year-wise enrollment saved: {yearly_csv_path}")
 
-    # 🔥 THIS LINE IS CRITICAL
-    run_visualizations(df_clean, df_invalid)
+# ==========================
+# VISUALIZATIONS (VALID STATES ONLY)
+# ==========================
+print("📈 Generating visualizations...")
+plot_state_wise_enrollment(df, ref)   # ✅ Option A applied
+plot_yearly_enrollment(yearly_df)
 
-    print("✅ Pipeline completed successfully")
-
-
-print("📁 Output folder:", OUTPUT_PATH)
+print("🎉 Project executed successfully!")
